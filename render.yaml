@@ -26,5 +26,4 @@
 databases:
   - name: skill-db
     databaseName: skill_recommendation_db
-    user: postgres
     plan: free
