@@ -20,17 +20,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-# Gemini API Key
-GEMINI_API_KEY=AIzaSyD0T6xZCHwIg2gSojQG7NjZeN44Qcz8Il0
-
-# Database settings (if using PostgreSQL)
-DB_NAME=skill_recommendation_db
-DB_USER=postgres
-DB_PASSWORD=your_password_here
-DB_HOST=localhost
-DB_PORT=5432
-
-# Django settings
-DEBUG=True
-SECRET_KEY=django-insecure-your-secret-key-here
