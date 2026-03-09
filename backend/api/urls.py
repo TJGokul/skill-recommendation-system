@@ -1,4 +1,5 @@
 from django.urls import path
+from django.urls import re_path
 from . import views
 
 urlpatterns = [
@@ -20,4 +21,8 @@ urlpatterns = [
     path('get-live-jobs/', views.get_live_jobs, name='get-live-jobs'),
     path('latest-resume/', views.latest_resume, name='latest-resume'),
     path('skill-recommendations/', views.get_skill_recommendations, name='skill-recommendations'),
+    re_path(r'^register$', views.register, name='register-no-slash'),
+    re_path(r'^login$', views.login_view, name='login-no-slash'),
+    re_path(r'^logout$', views.logout_view, name='logout-no-slash'),
+    re_path(r'^user$', views.get_current_user, name='user-no-slash'),
 ]

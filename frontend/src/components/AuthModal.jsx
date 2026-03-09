@@ -1,22 +1,9 @@
-import React, { useState } from 'react';
-import axios from 'axios';
-import './AuthModal.css';
+// frontend/src/components/AuthModal.jsx
 
-// Helper function to get CSRF token from cookies
-function getCSRFToken() {
-  let cookieValue = null;
-  if (document.cookie && document.cookie !== '') {
-    const cookies = document.cookie.split(';');
-    for (let i = 0; i < cookies.length; i++) {
-      const cookie = cookies[i].trim();
-      if (cookie.substring(0, 10) === 'csrftoken=') {
-        cookieValue = decodeURIComponent(cookie.substring(10));
-        break;
-      }
-    }
-  }
-  return cookieValue;
-}
+import React, { useState } from 'react';
+import { useAuth } from '../context/AuthContext';
+import api, { getCSRFToken } from '../services/api'; // Import the shared api instance
+import './AuthModal.css';
 
 function AuthModal({ isOpen, onClose, onLoginSuccess }) {
   const [isLogin, setIsLogin] = useState(true);
@@ -34,6 +21,8 @@ function AuthModal({ isOpen, onClose, onLoginSuccess }) {
   });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  
+  const { login } = useAuth();
 
   if (!isOpen) return null;
 
@@ -57,31 +46,74 @@ function AuthModal({ isOpen, onClose, onLoginSuccess }) {
     }
 
     try {
-      const url = isLogin 
-        ? 'http://localhost:8000/api/login/' 
-        : 'http://localhost:8000/api/register/';
+      const url = isLogin ? '/login/' : '/register/';
       
-      // Get CSRF token
+      // Get CSRF token from shared helper
       const csrfToken = getCSRFToken();
       
-      // Create headers with CSRF token
-      const headers = {
-        'Content-Type': 'application/json',
-        'X-CSRFToken': csrfToken
-      };
+      // For login, only send username and password
+      const data = isLogin 
+        ? { 
+            username: formData.username, 
+            password: formData.password 
+          }
+        : { 
+            username: formData.username,
+            email: formData.email,
+            password: formData.password,
+            first_name: formData.first_name,
+            last_name: formData.last_name,
+            phone: formData.phone,
+            location: formData.location,
+            experience_years: parseInt(formData.experience_years) || 0,
+            education: formData.education
+          };
       
-      const response = await axios.post(url, formData, {
-        headers: headers,
-        withCredentials: true  // Important for cookies/session
+      console.log('Sending auth request to:', url);
+      console.log('With CSRF token:', csrfToken);
+      
+      // Use the shared api instance
+      const response = await api.post(url, data, {
+        headers: {
+          'X-CSRFToken': csrfToken
+        }
       });
 
+      console.log('Auth response:', response.data);
+      console.log('Cookies after login:', document.cookie);
+
       if (response.data) {
-        onLoginSuccess(response.data);
-        onClose();
+        // Check if session cookie was set
+        if (document.cookie.includes('sessionid')) {
+          console.log('✅ Session cookie set successfully');
+          
+          // Set user in auth context
+          login(response.data.user);
+          onLoginSuccess(response.data);
+          onClose(); // Close modal on success
+        } else {
+          console.warn('⚠️ No session cookie received');
+          // Still try to proceed
+          login(response.data.user);
+          onLoginSuccess(response.data);
+          onClose();
+        }
       }
     } catch (err) {
-      console.error('Auth error:', err.response?.data);
-      setError(err.response?.data?.error || 'An error occurred. Please try again.');
+      console.error('Auth error:', err.response?.data || err.message);
+      
+      if (err.response?.status === 403) {
+        setError('CSRF token error. Please refresh the page and try again.');
+      } else if (err.response?.data?.error) {
+        setError(err.response.data.error);
+      } else if (err.response?.data?.errors) {
+        const errorMessages = Object.values(err.response.data.errors).join(', ');
+        setError(errorMessages);
+      } else if (err.code === 'ERR_NETWORK') {
+        setError('Network error. Please check if backend server is running.');
+      } else {
+        setError('Login failed. Please try again.');
+      }
     } finally {
       setLoading(false);
     }

@@ -3,14 +3,13 @@
 import requests
 import os
 import time
-import random
 from django.core.cache import cache
 from datetime import datetime
 
 class JobSearchService:
     """
-    Guarantees 6+ job recommendations for ANY resume
-    Uses: JSearch API + Fallback Database + Smart Matching
+    Universal JSearch API integration - Works for ALL Industries
+    Supports: Medical, Chemical, Electrical, Mechanical, Civil, IT, and more
     """
     
     def __init__(self):
@@ -22,296 +21,448 @@ class JobSearchService:
         self.last_request = 0
         self.min_interval = 1.0
         
-        print(f"🔑 API Key: {bool(self.api_key)}")
+        print(f"🔑 JSearch API Key configured: {bool(self.api_key)}")
 
     def search_by_skills(self, skills_list, location=""):
         """
-        Returns 6+ job recommendations guaranteed
-        Strategy: API First → Fallback Database → Smart Matching
+        Universal job search - Works for ANY industry
         """
         start = time.time()
         
         # Clean skills
-        skills = [str(s).lower() for s in skills_list if s and len(str(s)) > 2][:4]
+        skills = [str(s).lower().strip() for s in skills_list if s and len(str(s)) > 1]
         
         if not skills:
-            return self._get_popular_jobs()
+            print("⚠️ No valid skills provided")
+            return []
         
-        # Check cache (4 hours)
-        cache_key = f"jobs6_{'_'.join(sorted(skills))}_{location}"
+        print(f"🔍 Searching jobs for skills: {skills}")
+        
+        # Check cache
+        cache_key = f"jsearch_universal_{'_'.join(sorted(skills))}_{location}"
         cached = cache.get(cache_key)
         if cached:
-            print(f"📦 Cache: {len(cached)} jobs")
+            print(f"📦 Cache hit: {len(cached)} jobs")
             return cached
         
-        all_jobs = []
+        # Check API key
+        if not self.api_key:
+            print("❌ No API key configured")
+            return []
         
-        # STRATEGY 1: Try JSearch API (max 3 calls)
-        if self.api_key:
-            api_jobs = self._try_api(skills, location)
-            all_jobs.extend(api_jobs)
-            print(f"📡 API: {len(api_jobs)} jobs")
+        # Detect industry from skills
+        industry = self._detect_industry(skills)
+        print(f"🏭 Detected industry: {industry}")
         
-        # STRATEGY 2: Fill with fallback database if needed
-        if len(all_jobs) < 6:
-            fallback = self._get_fallback_jobs(skills, location)
-            all_jobs.extend(fallback)
-            print(f"📚 Fallback: {len(fallback)} jobs")
+        # Generate industry-specific queries
+        queries = self._generate_universal_queries(skills, industry)
         
-        # STRATEGY 3: Smart matching for remaining slots
-        if len(all_jobs) < 6:
-            smart = self._get_smart_matches(skills)
-            all_jobs.extend(smart)
-            print(f"🧠 Smart: {len(smart)} jobs")
+        # Fetch jobs from API
+        all_jobs = self._fetch_jobs_from_api(queries, location)
         
-        # Deduplicate and score
-        final_jobs = self._deduplicate_and_score(all_jobs, skills)
+        if not all_jobs:
+            print("❌ No jobs found from API")
+            return []
         
-        # Cache for 4 hours
-        cache.set(cache_key, final_jobs, 14400)  # 4 hours
+        # Calculate match scores
+        for job in all_jobs:
+            job['match_score'] = self._calculate_universal_score(job, skills, industry)
         
-        print(f"✅ Total: {len(final_jobs)} jobs in {time.time()-start:.1f}s")
-        return final_jobs
+        # Sort by match score
+        all_jobs.sort(key=lambda x: x['match_score'], reverse=True)
+        
+        # Cache results
+        cache.set(cache_key, all_jobs, 60 * 60 * 4)  # 4 hours
+        
+        print(f"✅ Found {len(all_jobs)} jobs in {time.time()-start:.1f}s")
+        return all_jobs[:20]
 
-    def _try_api(self, skills, location):
-        """Try JSearch API with smart retry logic"""
-        jobs = []
+    def _detect_industry(self, skills):
+        """Detect which industry the skills belong to"""
+        skills_text = ' '.join(skills).lower()
+        
+        # Industry keywords
+        industries = {
+            'medical': [
+                'nurse', 'nursing', 'doctor', 'physician', 'surgeon', 'dentist', 
+                'pharmacy', 'pharmacist', 'medical', 'clinical', 'hospital', 
+                'healthcare', 'health', 'patient', 'therapy', 'therapist', 
+                'radiologist', 'cardiologist', 'pediatrician', 'dermatologist',
+                'medicine', 'surgery', 'emergency', 'paramedic', 'emt',
+                'laboratory', 'lab', 'pathology', 'radiology', 'oncology',
+                'neurology', 'cardiology', 'orthopedic', 'gynecology',
+                'psychiatry', 'psychologist', 'counselor', 'therapist'
+            ],
+            'chemical': [
+                'chemical', 'chemistry', 'chemist', 'laboratory', 'lab',
+                'process', 'production', 'manufacturing', 'pharmaceutical',
+                'petrochemical', 'polymer', 'material', 'compound', 'reaction',
+                'analysis', 'analytical', 'synthesis', 'formulation',
+                'quality control', 'qc', 'qa', 'safety', 'hazardous'
+            ],
+            'mechanical': [
+                'mechanical', 'machinery', 'machine', 'equipment', 'maintenance',
+                'repair', 'installation', 'fabrication', 'welding', 'machining',
+                'cnc', 'cad', 'cam', 'solidworks', 'autocad', 'inventor',
+                'hvac', 'plumbing', 'piping', 'hydraulic', 'pneumatic',
+                'thermodynamics', 'fluid', 'mechanics', 'design', 'drafting'
+            ],
+            'electrical': [
+                'electrical', 'electronics', 'electrician', 'circuit', 'wiring',
+                'panel', 'breaker', 'transformer', 'motor', 'generator',
+                'power', 'distribution', 'transmission', 'substation',
+                'instrumentation', 'control', 'plc', 'scada', 'automation',
+                'telecom', 'telecommunication', 'network', 'fiber', 'cabling',
+                'renewable', 'solar', 'wind', 'energy'
+            ],
+            'civil': [
+                'civil', 'construction', 'building', 'structure', 'infrastructure',
+                'road', 'highway', 'bridge', 'tunnel', 'dam', 'foundation',
+                'site', 'project', 'supervision', 'survey', 'estimation',
+                'quantity', 'billing', 'planning', 'execution', 'contractor',
+                'architect', 'architecture', 'structural', 'geotechnical',
+                'transportation', 'urban', 'planning', 'development'
+            ],
+            'software': [
+                'software', 'developer', 'programmer', 'coding', 'programming',
+                'python', 'java', 'javascript', 'react', 'angular', 'node',
+                'sql', 'database', 'web', 'frontend', 'backend', 'fullstack',
+                'mobile', 'app', 'ios', 'android', 'cloud', 'aws', 'azure',
+                'devops', 'docker', 'kubernetes', 'machine learning', 'ai'
+            ],
+            'data': [
+                'data', 'analyst', 'analysis', 'analytics', 'statistics',
+                'excel', 'tableau', 'power bi', 'sql', 'python', 'r',
+                'machine learning', 'ai', 'artificial intelligence',
+                'business intelligence', 'bi', 'reporting', 'dashboard',
+                'visualization', 'predictive', 'modeling', 'mining'
+            ],
+            'marketing': [
+                'marketing', 'digital', 'social media', 'seo', 'sem', 'ppc',
+                'content', 'copywriting', 'brand', 'advertising', 'campaign',
+                'email', 'marketing automation', 'crm', 'salesforce',
+                'market research', 'analytics', 'google analytics', 'facebook'
+            ],
+            'finance': [
+                'finance', 'accounting', 'accountant', 'audit', 'tax',
+                'financial', 'analysis', 'analyst', 'investment', 'banking',
+                'wealth', 'portfolio', 'risk', 'compliance', 'regulatory',
+                'bookkeeping', 'quickbooks', 'sap', 'oracle', 'erp',
+                'payroll', 'invoicing', 'budgeting', 'forecasting'
+            ],
+            'human_resources': [
+                'hr', 'human resources', 'recruitment', 'recruiter', 'talent',
+                'acquisition', 'staffing', 'onboarding', 'training',
+                'development', 'employee relations', 'payroll', 'benefits',
+                'compensation', 'performance', 'management', 'culture'
+            ],
+            'sales': [
+                'sales', 'business development', 'bd', 'account executive',
+                'account manager', 'sales representative', 'salesperson',
+                'b2b', 'b2c', 'inside sales', 'outside sales', 'field sales',
+                'territory', 'regional', 'national', 'global', 'quota',
+                'crm', 'salesforce', 'negotiation', 'closing', 'prospecting'
+            ],
+            'customer_service': [
+                'customer service', 'support', 'help desk', 'call center',
+                'client services', 'customer success', 'csr', 'representative',
+                'technical support', 'it support', 'service desk',
+                'hospitality', 'retail', 'front desk', 'reception'
+            ],
+            'education': [
+                'teacher', 'teaching', 'professor', 'instructor', 'educator',
+                'faculty', 'lecturer', 'trainer', 'coach', 'mentor',
+                'school', 'college', 'university', 'academic', 'education',
+                'curriculum', 'instruction', 'lesson', 'classroom'
+            ],
+            'hospitality': [
+                'hotel', 'restaurant', 'catering', 'food', 'beverage',
+                'chef', 'cook', 'server', 'waiter', 'bartender',
+                'management', 'front desk', 'concierge', 'housekeeping',
+                'event', 'banquet', 'hospitality', 'tourism', 'travel'
+            ]
+        }
+        
+        # Count matches for each industry
+        industry_scores = {}
+        for industry, keywords in industries.items():
+            score = 0
+            for keyword in keywords:
+                if keyword in skills_text:
+                    score += 2
+                # Also check for partial matches
+                for skill in skills:
+                    if keyword in skill or skill in keyword:
+                        score += 1
+            if score > 0:
+                industry_scores[industry] = score
+        
+        # Return the industry with highest score, or 'general' if none
+        if industry_scores:
+            return max(industry_scores, key=industry_scores.get)
+        return 'general'
+
+    def _generate_universal_queries(self, skills, industry):
+        """Generate industry-appropriate search queries"""
+        queries = []
+        primary_skill = skills[0] if skills else ""
+        
+        # Industry-specific job titles
+        industry_titles = {
+            'medical': [
+                'nurse', 'doctor', 'physician', 'medical assistant', 
+                'healthcare', 'clinical', 'hospital', 'pharmacist',
+                'dentist', 'therapist', 'radiologist', 'surgeon'
+            ],
+            'chemical': [
+                'chemical engineer', 'process engineer', 'production engineer',
+                'chemical technician', 'laboratory technician', 'chemist',
+                'quality control', 'pharmaceutical', 'petrochemical'
+            ],
+            'mechanical': [
+                'mechanical engineer', 'design engineer', 'manufacturing engineer',
+                'maintenance engineer', 'machinist', 'cnc operator',
+                'hvac technician', 'mechanical designer', 'draftsman'
+            ],
+            'electrical': [
+                'electrical engineer', 'electronics engineer', 'electrician',
+                'instrumentation engineer', 'control engineer', 'power engineer',
+                'electrical technician', 'automation engineer', 'scada'
+            ],
+            'civil': [
+                'civil engineer', 'site engineer', 'construction manager',
+                'project engineer', 'structural engineer', 'quantity surveyor',
+                'building inspector', 'construction supervisor', 'architect'
+            ],
+            'software': [
+                'software engineer', 'developer', 'programmer', 'full stack',
+                'frontend', 'backend', 'mobile developer', 'devops engineer'
+            ],
+            'data': [
+                'data scientist', 'data analyst', 'data engineer', 
+                'business analyst', 'analytics manager', 'bi developer'
+            ],
+            'marketing': [
+                'marketing manager', 'digital marketing', 'social media manager',
+                'content writer', 'seo specialist', 'marketing coordinator'
+            ],
+            'finance': [
+                'financial analyst', 'accountant', 'auditor', 'tax specialist',
+                'finance manager', 'investment banker', 'wealth manager'
+            ],
+            'human_resources': [
+                'hr manager', 'recruiter', 'talent acquisition', 'hr generalist',
+                'training manager', 'compensation specialist', 'hr assistant'
+            ],
+            'sales': [
+                'sales representative', 'account executive', 'business development',
+                'sales manager', 'territory manager', 'regional sales'
+            ],
+            'customer_service': [
+                'customer service representative', 'support specialist',
+                'help desk technician', 'call center agent', 'client services'
+            ],
+            'education': [
+                'teacher', 'professor', 'instructor', 'educator', 'trainer',
+                'school teacher', 'college professor', 'academic advisor'
+            ],
+            'hospitality': [
+                'hotel manager', 'restaurant manager', 'chef', 'cook',
+                'front desk agent', 'concierge', 'event coordinator'
+            ]
+        }
+        
+        # Add industry-specific titles
+        if industry in industry_titles:
+            queries.extend(industry_titles[industry])
+        
+        # Add skill-based queries
+        for skill in skills[:3]:
+            queries.append(skill)
+            queries.append(f"{skill} specialist")
+            queries.append(f"{skill} technician")
+            queries.append(f"{skill} engineer")
+            queries.append(f"{skill} manager")
+        
+        # Add combination queries
+        if len(skills) >= 2:
+            queries.append(f"{skills[0]} {skills[1]}")
+            queries.append(f"{skills[0]} and {skills[1]}")
+        
+        # Add general queries based on industry
+        if industry == 'general':
+            queries.extend([
+                f"{primary_skill} jobs",
+                f"{primary_skill} position",
+                f"{primary_skill} career"
+            ])
+        
+        # Remove duplicates while preserving order
         seen = set()
+        unique_queries = []
+        for q in queries:
+            if q not in seen:
+                seen.add(q)
+                unique_queries.append(q)
         
-        # Most effective queries based on skills
-        queries = self._smart_queries(skills)
+        return unique_queries[:10]  # Return top 10 unique queries
+
+    def _fetch_jobs_from_api(self, queries, location):
+        """Fetch jobs from JSearch API"""
+        all_jobs = []
+        seen_job_ids = set()
         
-        for query in queries[:3]:  # Max 3 API calls
+        for query in queries:
             # Rate limiting
             elapsed = time.time() - self.last_request
             if elapsed < self.min_interval:
                 time.sleep(self.min_interval - elapsed)
             
+            # Prepare search query
+            search_query = query
+            if location:
+                search_query = f"{query} in {location}"
+            
             url = f"{self.base_url}/search"
             params = {
-                "query": f"{query} {location}" if location else query,
+                "query": search_query,
                 "page": "1",
                 "num_pages": "1",
-                "date_posted": "week"
+                "date_posted": "week",  # Last 7 days
+                "remote_jobs_only": "false"
             }
             headers = {
                 "X-RapidAPI-Key": self.api_key,
-                "X-RapidAPI-Host": self.api_host
+                "X-RapidAPI-Host": self.api_host,
+                "Content-Type": "application/json"
             }
             
             try:
-                print(f"📡 API: {query}")
-                response = requests.get(url, headers=headers, params=params, timeout=5)
+                print(f"📡 Searching: '{query}'")
+                response = requests.get(url, headers=headers, params=params, timeout=12)
                 self.last_request = time.time()
                 
                 if response.status_code == 200:
                     data = response.json()
-                    for job in data.get('data', [])[:5]:
-                        job_id = job.get('job_id')
-                        if job_id and job_id not in seen:
-                            seen.add(job_id)
-                            jobs.append(job)
-                
-                if len(jobs) >= 10:
-                    break
                     
+                    if data.get('status') == 'OK' and data.get('data'):
+                        jobs = data['data']
+                        print(f"   Found {len(jobs)} jobs")
+                        
+                        for job in jobs:
+                            job_id = job.get('job_id')
+                            if job_id and job_id not in seen_job_ids:
+                                seen_job_ids.add(job_id)
+                                formatted_job = self._format_universal_job(job)
+                                all_jobs.append(formatted_job)
+                    else:
+                        print(f"   No jobs found")
+                else:
+                    print(f"⚠️ API error: {response.status_code}")
+                    
+            except requests.exceptions.Timeout:
+                print(f"⚠️ Timeout for query: '{query}'")
+                continue
             except Exception as e:
-                print(f"⚠️ API error: {e}")
+                print(f"⚠️ Error: {e}")
                 continue
+            
+            # Stop if we have enough jobs
+            if len(all_jobs) >= 30:
+                break
         
-        return jobs
+        return all_jobs
 
-    def _smart_queries(self, skills):
-        """Generate smart search queries"""
-        primary = skills[0] if skills else ''
+    def _format_universal_job(self, job):
+        """Format job data for any industry"""
+        # Extract salary
+        salary = None
+        if job.get('job_min_salary') and job.get('job_max_salary'):
+            salary = f"${job['job_min_salary']:,.0f} - ${job['job_max_salary']:,.0f}"
+            if job.get('job_salary_period'):
+                salary += f" per {job['job_salary_period'].lower()}"
+        elif job.get('job_min_salary'):
+            salary = f"From ${job['job_min_salary']:,.0f}"
         
-        # Industry-standard job titles
-        titles = {
-            'python': ['python developer', 'backend developer', 'software engineer'],
-            'java': ['java developer', 'software engineer', 'full stack java'],
-            'javascript': ['javascript developer', 'frontend developer', 'web developer'],
-            'react': ['react developer', 'frontend developer', 'javascript developer'],
-            'sql': ['sql developer', 'database administrator', 'data analyst'],
-            'aws': ['aws engineer', 'cloud engineer', 'devops engineer'],
-            'docker': ['devops engineer', 'platform engineer', 'site reliability'],
-            'c': ['c developer', 'embedded engineer', 'firmware engineer'],
-            'c++': ['c++ developer', 'software engineer', 'game developer'],
-            'management': ['project manager', 'product manager', 'team lead'],
-            'analytical': ['data analyst', 'business analyst', 'financial analyst'],
-            'chemical': ['chemical engineer', 'process engineer', 'production engineer'],
-            'mechanical': ['mechanical engineer', 'design engineer', 'manufacturing engineer'],
-            'electrical': ['electrical engineer', 'electronics engineer', 'power engineer'],
-            'civil': ['civil engineer', 'structural engineer', 'construction engineer'],
-            'support': ['technical support', 'it support', 'help desk'],
-            'network': ['network engineer', 'network administrator', 'system administrator']
+        # Location
+        location_parts = []
+        if job.get('job_city'):
+            location_parts.append(job['job_city'])
+        if job.get('job_state'):
+            location_parts.append(job['job_state'])
+        if job.get('job_country'):
+            location_parts.append(job['job_country'])
+        
+        location = ', '.join(location_parts) if location_parts else 'Remote'
+        
+        # Description
+        description = job.get('job_description', '')
+        if len(description) > 300:
+            description = description[:300] + '...'
+        
+        return {
+            'id': job.get('job_id'),
+            'title': job.get('job_title'),
+            'company': job.get('employer_name'),
+            'company_logo': job.get('employer_logo'),
+            'location': location,
+            'description': description,
+            'salary': salary,
+            'apply_url': job.get('job_apply_link'),
+            'posted_date': job.get('job_posted_at_datetime_utc'),
+            'job_type': job.get('job_employment_type', 'fulltime').lower(),
+            'is_remote': job.get('job_is_remote', False),
+            'source': 'JSearch API',
+            'required_skills': [],  # Will be populated by score calculation
+        }
+
+    def _calculate_universal_score(self, job, user_skills, industry):
+        """Calculate relevance score for any industry"""
+        title = job.get('title', '').lower()
+        description = job.get('description', '').lower()
+        
+        score = 50  # Base score
+        matched_skills = []
+        
+        for skill in user_skills:
+            skill_lower = skill.lower()
+            
+            # Check in title (highest weight)
+            if skill_lower in title:
+                score += 15
+                matched_skills.append(skill)
+            # Check in description
+            elif skill_lower in description:
+                score += 8
+                matched_skills.append(skill)
+            # Check for partial matches (for industry terms)
+            elif any(word in skill_lower for word in description.split()):
+                score += 3
+        
+        # Industry bonus
+        industry_keywords = {
+            'medical': ['hospital', 'clinic', 'patient', 'health', 'medical'],
+            'chemical': ['lab', 'chemical', 'process', 'production'],
+            'mechanical': ['mechanical', 'machine', 'equipment', 'maintenance'],
+            'electrical': ['electrical', 'power', 'circuit', 'electronic'],
+            'civil': ['construction', 'building', 'site', 'infrastructure'],
+            'software': ['software', 'development', 'programming', 'coding'],
+            'data': ['data', 'analysis', 'analytics', 'statistics'],
+            'marketing': ['marketing', 'advertising', 'campaign', 'brand'],
+            'finance': ['finance', 'accounting', 'financial', 'investment'],
+            'sales': ['sales', 'client', 'customer', 'revenue'],
+            'customer_service': ['support', 'service', 'help', 'customer'],
+            'education': ['teaching', 'education', 'school', 'college'],
+            'hospitality': ['hotel', 'restaurant', 'service', 'guest']
         }
         
-        return titles.get(primary, [f"{primary} engineer", f"{primary} developer", "software engineer"])
-
-    def _get_fallback_jobs(self, skills, location):
-        """Comprehensive fallback job database"""
-        primary = skills[0] if skills else 'software'
-        secondary = skills[1] if len(skills) > 1 else ''
-        
-        # Indian job market database
-        fallback_db = [
-            # IT Jobs
-            {'title': f'{primary.title()} Developer', 'company': 'TCS', 'source': 'LinkedIn'},
-            {'title': f'{primary.title()} Engineer', 'company': 'Infosys', 'source': 'Indeed'},
-            {'title': f'Junior {primary.title()} Developer', 'company': 'Wipro', 'source': 'Naukri'},
-            {'title': f'{primary.title()} Programmer', 'company': 'Accenture', 'source': 'Glassdoor'},
-            {'title': f'{primary.title()} Specialist', 'company': 'Cognizant', 'source': 'Monster'},
-            {'title': 'Software Developer', 'company': 'Tech Mahindra', 'source': 'LinkedIn'},
-            {'title': 'Full Stack Developer', 'company': 'HCL', 'source': 'Indeed'},
-            
-            # Engineering Jobs
-            {'title': 'Process Engineer', 'company': 'Reliance', 'source': 'LinkedIn'},
-            {'title': 'Chemical Engineer', 'company': 'Grasim', 'source': 'Naukri'},
-            {'title': 'Mechanical Designer', 'company': 'L&T', 'source': 'Glassdoor'},
-            {'title': 'Electrical Engineer', 'company': 'Siemens', 'source': 'Indeed'},
-            {'title': 'Civil Engineer', 'company': 'Shapoorji', 'source': 'Monster'},
-            
-            # Support Jobs
-            {'title': 'Technical Support', 'company': 'Amazon', 'source': 'LinkedIn'},
-            {'title': 'IT Support Specialist', 'company': 'Microsoft', 'source': 'Indeed'},
-            {'title': 'Help Desk Technician', 'company': 'Dell', 'source': 'Naukri'},
-            {'title': 'Network Administrator', 'company': 'Cisco', 'source': 'Glassdoor'},
-            {'title': 'System Administrator', 'company': 'IBM', 'source': 'Monster'},
-        ]
-        
-        # Filter relevant jobs
-        relevant = []
-        for job in fallback_db:
-            title = job['title'].lower()
-            desc = f"{job['title']} {job['company']}".lower()
-            
-            # Calculate relevance score
-            score = 0
-            for skill in skills:
-                if skill in title:
-                    score += 30
-                elif skill in desc:
-                    score += 15
-            
-            if score > 20:  # Only include relevant jobs
-                relevant.append({
-                    'id': f"fallback_{len(relevant)}",
-                    'title': job['title'],
-                    'company': job['company'],
-                    'description': f"Position for {primary} professionals. Apply via {job['source']}.",
-                    'location': location or 'Multiple Locations, India',
-                    'salary': 'Competitive',
-                    'apply_url': f"https://www.{job['source'].lower()}.com/jobs/",
-                    'match_score': min(95, 60 + score),
-                    'source': job['source'],
-                    'is_remote': random.choice([True, False])
-                })
-        
-        return relevant[:8]
-
-    def _get_smart_matches(self, skills):
-        """Generate smart job matches based on skills"""
-        smart_jobs = []
-        primary = skills[0] if skills else ''
-        
-        # Skill to job mapping
-        job_templates = {
-            'python': ['Python Developer', 'Backend Engineer', 'Data Scientist'],
-            'java': ['Java Developer', 'Android Developer', 'Spring Boot Engineer'],
-            'javascript': ['JavaScript Developer', 'Frontend Engineer', 'Node.js Developer'],
-            'react': ['React Developer', 'Frontend Engineer', 'UI Developer'],
-            'sql': ['SQL Developer', 'Database Administrator', 'Data Analyst'],
-            'aws': ['AWS Engineer', 'Cloud Architect', 'DevOps Engineer'],
-            'docker': ['DevOps Engineer', 'Platform Engineer', 'Site Reliability Engineer'],
-            'chemical': ['Chemical Engineer', 'Process Engineer', 'Production Engineer'],
-            'mechanical': ['Mechanical Engineer', 'Design Engineer', 'CAD Engineer'],
-            'electrical': ['Electrical Engineer', 'Electronics Engineer', 'Power Engineer'],
-            'civil': ['Civil Engineer', 'Structural Engineer', 'Site Engineer'],
-            'support': ['Technical Support', 'IT Support', 'Help Desk Technician'],
-        }
-        
-        templates = job_templates.get(primary, ['Software Engineer', 'Developer', 'Engineer'])
-        
-        for i, title in enumerate(templates[:3]):
-            smart_jobs.append({
-                'id': f"smart_{i}",
-                'title': title,
-                'company': f"Tech Company {i+1}",
-                'description': f"Position requiring {primary} skills. Fast-growing company with excellent benefits.",
-                'location': 'Remote / Multiple Locations',
-                'salary': 'Market Rate',
-                'apply_url': f"https://www.linkedin.com/jobs/search/?keywords={primary}",
-                'match_score': 90 - (i * 5),
-                'source': 'LinkedIn',
-                'is_remote': True
-            })
-        
-        return smart_jobs
-
-    def _get_popular_jobs(self):
-        """Get popular jobs when no skills detected"""
-        return [
-            {
-                'id': 'pop1',
-                'title': 'Software Developer',
-                'company': 'Google',
-                'description': 'Join Google as a software developer. Work on impactful projects.',
-                'location': 'Worldwide',
-                'salary': 'Competitive',
-                'apply_url': 'https://careers.google.com/',
-                'match_score': 85,
-                'source': 'Google Careers'
-            },
-            {
-                'id': 'pop2',
-                'title': 'Frontend Engineer',
-                'company': 'Microsoft',
-                'description': 'Build beautiful web applications at Microsoft.',
-                'location': 'Remote',
-                'salary': 'Market Rate',
-                'apply_url': 'https://careers.microsoft.com/',
-                'match_score': 82,
-                'source': 'Microsoft'
-            },
-            {
-                'id': 'pop3',
-                'title': 'Data Analyst',
-                'company': 'Amazon',
-                'description': 'Analyze data and drive business decisions at Amazon.',
-                'location': 'Multiple',
-                'salary': 'Competitive',
-                'apply_url': 'https://www.amazon.jobs/',
-                'match_score': 80,
-                'source': 'Amazon Jobs'
-            }
-        ]
-
-    def _deduplicate_and_score(self, jobs, skills):
-        """Remove duplicates and add match scores"""
-        seen = set()
-        unique = []
-        
-        for job in jobs:
-            # Create unique key
-            key = f"{job.get('title', '')}|{job.get('company', '')}"
-            if key in seen:
-                continue
-            seen.add(key)
-            
-            # Calculate final match score
-            title = job.get('title', '').lower()
-            desc = job.get('description', '').lower()
-            
-            score = 30
-            for skill in skills:
-                if skill in title:
-                    score += 20
-                elif skill in desc:
+        if industry in industry_keywords:
+            for keyword in industry_keywords[industry]:
+                if keyword in title or keyword in description:
                     score += 10
-            
-            job['match_score'] = min(95, score)
-            unique.append(job)
+                    break
         
-        # Sort by match score
-        unique.sort(key=lambda x: x['match_score'], reverse=True)
-        return unique[:15]  # Return top 15
+        # Store matched skills
+        job['required_skills'] = list(set(matched_skills))[:8]
+        
+        return min(98, score)

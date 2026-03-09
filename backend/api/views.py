@@ -12,10 +12,17 @@ from google import generativeai as genai
 from .job_service import JobSearchService
 from .ml_models.skill_recommender import SkillRecommender
 from .ml_models.ai_skill_recommender import AISkillRecommender
+from django.views.decorators.csrf import ensure_csrf_cookie, csrf_protect
+from django.middleware.csrf import get_token
 import traceback
 import os
 from dotenv import load_dotenv
 import json
+from django.contrib.auth import authenticate, login
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from rest_framework import status
+
 
 # Load environment variables
 load_dotenv()
@@ -73,32 +80,65 @@ def test_api(request):
 
 @api_view(['POST'])
 def register(request):
-    """Register a new user"""
+    """Register a new user with detailed error messages"""
+    print("\n" + "="*50)
+    print("📝 REGISTRATION ATTEMPT")
+    print("="*50)
+    
     try:
-        username = request.data.get('username')
-        email = request.data.get('email')
-        password = request.data.get('password')
-        first_name = request.data.get('first_name', '')
-        last_name = request.data.get('last_name', '')
-        phone = request.data.get('phone', '')
-        location = request.data.get('location', '')
+        # Log the incoming data (hide password)
+        data_copy = request.data.copy()
+        if 'password' in data_copy:
+            data_copy['password'] = '********'
+        print(f"Request data: {data_copy}")
+        
+        username = request.data.get('username', '').strip()
+        email = request.data.get('email', '').strip()
+        password = request.data.get('password', '')
+        first_name = request.data.get('first_name', '').strip()
+        last_name = request.data.get('last_name', '').strip()
+        phone = request.data.get('phone', '').strip()
+        location = request.data.get('location', '').strip()
         experience_years = request.data.get('experience_years', 0)
-        education = request.data.get('education', '')
+        education = request.data.get('education', '').strip()
+        
+        print(f"Username: {username}")
+        print(f"Email: {email}")
+        print(f"First Name: {first_name}")
+        print(f"Last Name: {last_name}")
         
         # Validate required fields
-        if not username or not email or not password:
-            return Response({
-                'error': 'Username, email, and password are required'
-            }, status=status.HTTP_400_BAD_REQUEST)
+        errors = {}
+        if not username:
+            errors['username'] = 'Username is required'
+        if not email:
+            errors['email'] = 'Email is required'
+        if not password:
+            errors['password'] = 'Password is required'
+        elif len(password) < 6:
+            errors['password'] = 'Password must be at least 6 characters'
+            
+        if errors:
+            print(f"Validation errors: {errors}")
+            return Response({'errors': errors}, status=status.HTTP_400_BAD_REQUEST)
         
         # Check if user already exists
         if User.objects.filter(username=username).exists():
-            return Response({'error': 'Username already exists'}, status=status.HTTP_400_BAD_REQUEST)
+            print(f"❌ Username already exists: {username}")
+            return Response({
+                'error': 'Username already exists',
+                'field': 'username'
+            }, status=status.HTTP_400_BAD_REQUEST)
         
         if User.objects.filter(email=email).exists():
-            return Response({'error': 'Email already exists'}, status=status.HTTP_400_BAD_REQUEST)
+            print(f"❌ Email already exists: {email}")
+            return Response({
+                'error': 'Email already exists',
+                'field': 'email'
+            }, status=status.HTTP_400_BAD_REQUEST)
         
         # Create user
+        print("📝 Creating user...")
         user = User.objects.create_user(
             username=username,
             email=email,
@@ -106,18 +146,27 @@ def register(request):
             first_name=first_name,
             last_name=last_name
         )
+        print(f"✅ User created with ID: {user.id}")
         
         # Create JobSeeker profile
+        print("📝 Creating job seeker profile...")
         job_seeker = JobSeeker.objects.create(
             user=user,
             phone=phone,
             location=location,
-            experience_years=experience_years if experience_years else 0,
+            experience_years=int(experience_years) if experience_years else 0,
             education=education
         )
+        print(f"✅ Job seeker profile created with ID: {job_seeker.id}")
         
         # Log the user in
         login(request, user)
+        request.session.save()
+        print(f"✅ User logged in, session saved")
+        
+        print("="*50)
+        print("✅ REGISTRATION SUCCESSFUL")
+        print("="*50)
         
         return Response({
             'message': 'User created successfully',
@@ -132,27 +181,55 @@ def register(request):
         }, status=status.HTTP_201_CREATED)
         
     except Exception as e:
-        print(f"Registration error: {str(e)}")
-        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
+        print(f"❌ ERROR: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        print("="*50)
+        return Response({
+            'error': 'Registration failed. Please try again.',
+            'detail': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
 @api_view(['POST'])
 def login_view(request):
-    """Login user"""
+    """Login user with detailed debugging"""
+    print("\n" + "="*50)
+    print("🔐 LOGIN ATTEMPT")
+    print("="*50)
+    
     try:
         username = request.data.get('username')
         password = request.data.get('password')
         
+        print(f"Username: {username}")
+        print(f"Password received: {'Yes' if password else 'No'}")
+        
         if not username or not password:
+            print("❌ Missing credentials")
             return Response({
                 'error': 'Username and password are required'
             }, status=status.HTTP_400_BAD_REQUEST)
         
+        # Check if user exists
+        user_exists = User.objects.filter(username=username).exists()
+        print(f"User exists in database: {user_exists}")
+        
+        if user_exists:
+            user_obj = User.objects.get(username=username)
+            print(f"User found: {user_obj.username}, Email: {user_obj.email}")
+            print(f"User is_active: {user_obj.is_active}")
+        
+        # Attempt authentication
         user = authenticate(request, username=username, password=password)
         
         if user is not None:
+            print(f"✅ Authentication successful for: {user.username}")
             login(request, user)
+            request.session.save()
+            print(f"✅ Session saved. Session key: {request.session.session_key}")
             
             # Get or create job seeker profile
+            from .models import JobSeeker
             job_seeker, created = JobSeeker.objects.get_or_create(
                 user=user,
                 defaults={
@@ -162,6 +239,7 @@ def login_view(request):
                     'education': ''
                 }
             )
+            print(f"✅ Job seeker profile: {job_seeker.id} (created: {created})")
             
             return Response({
                 'message': 'Login successful',
@@ -175,32 +253,46 @@ def login_view(request):
                 'job_seeker_id': job_seeker.id
             })
         else:
+            print("❌ Authentication failed - invalid credentials")
             return Response({'error': 'Invalid username or password'}, status=status.HTTP_401_UNAUTHORIZED)
             
     except Exception as e:
-        print(f"Login error: {str(e)}")
-        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
+        print(f"❌ Login error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST) 
+    
 @api_view(['POST'])
 def logout_view(request):
-    """Logout user"""
+    """Logout user and clear session"""
+    print("\n" + "="*50)
+    print("🔓 LOGOUT ATTEMPT")
+    print("="*50)
+    
     try:
+        print(f"User before logout: {request.user}")
         logout(request)
+        print("✅ Logout successful")
+        
         response = Response({'message': 'Logout successful'})
         
         # Clear cookies
-        response.delete_cookie('csrftoken')
         response.delete_cookie('sessionid')
+        response.delete_cookie('csrftoken')
+        print("✅ Cookies cleared")
         
         return response
     except Exception as e:
-        print(f"Logout error: {str(e)}")
+        print(f"❌ Logout error: {str(e)}")
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
+    
 @api_view(['GET'])
 def get_current_user(request):
     """Get currently logged in user"""
+    print(f"🔍 get_current_user called - Authenticated: {request.user.is_authenticated}")
+    
     if request.user.is_authenticated:
+        print(f"User: {request.user.username}, ID: {request.user.id}")
         try:
             job_seeker = JobSeeker.objects.get(user=request.user)
             return Response({
@@ -227,11 +319,29 @@ def get_current_user(request):
                     'last_name': request.user.last_name
                 }
             })
+    print("No authenticated user")
     return Response({'user': None})
 
 @api_view(['POST'])
+@ensure_csrf_cookie
 def upload_resume(request):
-    """Upload and parse resume"""
+    """Upload and parse resume - requires authentication"""
+    print("\n" + "="*50)
+    print("📤 UPLOAD RESUME ATTEMPT")
+    print("="*50)
+    
+    # Check authentication FIRST
+    print(f"User authenticated: {request.user.is_authenticated}")
+    if not request.user.is_authenticated:
+        print("❌ User not authenticated")
+        return Response(
+            {'error': 'Authentication required. Please log in.'}, 
+            status=status.HTTP_401_UNAUTHORIZED
+        )
+    
+    print(f"User: {request.user.username}, ID: {request.user.id}")
+    print(f"CSRF Token: {get_token(request)}")
+    
     try:
         if 'resume' not in request.FILES:
             return Response({'error': 'No resume file provided'}, status=status.HTTP_400_BAD_REQUEST)
@@ -259,7 +369,7 @@ def upload_resume(request):
         # Parse resume
         print("🔍 Calling parser.parse_resume...")
         parsed_data = parser.parse_resume(full_path)
-        print(f"✅ Parse successful: Found skills in {len(parsed_data.get('skills', {}).get('by_category', {}))} categories")
+        print(f"✅ Parse successful")
         
         # Save resume record
         resume = Resume.objects.create(
@@ -268,15 +378,22 @@ def upload_resume(request):
         )
         print(f"✅ Resume saved with ID: {resume.id}")
         
-        # If user is authenticated, associate resume with them
-        if request.user.is_authenticated:
-            try:
-                job_seeker = JobSeeker.objects.get(user=request.user)
-                resume.job_seeker = job_seeker
-                resume.save()
-                print(f"✅ Resume associated with user: {request.user.username}")
-            except JobSeeker.DoesNotExist:
-                print("⚠️ JobSeeker not found for user")
+        # Associate resume with authenticated user
+        try:
+            job_seeker, created = JobSeeker.objects.get_or_create(
+                user=request.user,
+                defaults={
+                    'phone': '',
+                    'location': '',
+                    'experience_years': 0,
+                    'education': ''
+                }
+            )
+            resume.job_seeker = job_seeker
+            resume.save()
+            print(f"✅ Resume associated with user: {request.user.username} (JobSeeker {'created' if created else 'existing'})")
+        except Exception as e:
+            print(f"⚠️ Error associating resume with user: {str(e)}")
         
         # Clean up temp file
         if os.path.exists(full_path):
@@ -301,8 +418,8 @@ def upload_resume(request):
         except:
             pass
         
-        return Response({'error': f'Error uploading resume: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
-
+        return Response({'error': f'Error uploading resume: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)\
+    
 @api_view(['GET'])
 def get_job_recommendations(request, job_seeker_id):
     """Get job recommendations for a job seeker"""

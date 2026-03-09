@@ -10,25 +10,28 @@ import SkillRecommendations from './components/SkillRecommendations';
 import JobListings from './components/JobListings';
 import Footer from './components/Footer';
 import { JobProvider } from './context/JobContext';
+import { AuthProvider } from './context/AuthContext';
 
 function App() {
   return (
-    <JobProvider>
-      <Router>
-        <div className="app">
-          <Navbar />
-          <main className="main-content">
-            <Routes>
-              <Route path="/" element={<Home />} />
-              <Route path="/upload" element={<ResumeUpload />} />
-              <Route path="/recommendations" element={<SkillRecommendations />} />
-              <Route path="/jobs" element={<JobListings />} />
-            </Routes>
-          </main>
-          <Footer />
-        </div>
-      </Router>
-    </JobProvider>
+    <AuthProvider>
+      <JobProvider>
+        <Router>
+          <div className="app">
+            <Navbar />
+            <main className="main-content">
+              <Routes>
+                <Route path="/" element={<Home />} />
+                <Route path="/upload" element={<ResumeUpload />} />
+                <Route path="/recommendations" element={<SkillRecommendations />} />
+                <Route path="/jobs" element={<JobListings />} />
+              </Routes>
+            </main>
+            <Footer />
+          </div>
+        </Router>
+      </JobProvider>
+    </AuthProvider>
   );
 }
 

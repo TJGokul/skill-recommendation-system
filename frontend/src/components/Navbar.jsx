@@ -1,65 +1,48 @@
-import React, { useState, useEffect } from 'react';
+// frontend/src/components/Navbar.jsx
+
+import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import AuthModal from './AuthModal';
+import { useAuth } from '../context/AuthContext';
+import { getCSRFToken } from '../utils/csrf';
 import axios from 'axios';
-
-// Helper function to get CSRF token
-function getCSRFToken() {
-  let cookieValue = null;
-  if (document.cookie && document.cookie !== '') {
-    const cookies = document.cookie.split(';');
-    for (let i = 0; i < cookies.length; i++) {
-      const cookie = cookies[i].trim();
-      if (cookie.substring(0, 10) === 'csrftoken=') {
-        cookieValue = decodeURIComponent(cookie.substring(10));
-        break;
-      }
-    }
-  }
-  return cookieValue;
-}
 
 function Navbar() {
   const [showAuthModal, setShowAuthModal] = useState(false);
-  const [user, setUser] = useState(null);
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
 
-  useEffect(() => {
-    checkUserStatus();
-  }, []);
-
-  const checkUserStatus = async () => {
-    try {
-      const response = await axios.get('http://localhost:8000/api/user/', {
-        withCredentials: true
-      });
-      if (response.data.user) {
-        setUser(response.data.user);
-      }
-    } catch (error) {
-      console.error('Error checking user status:', error);
-    }
+  const handleLoginSuccess = () => {
+    setShowAuthModal(false);
+    navigate('/upload');
   };
 
-  const handleLoginSuccess = (data) => {
-    setUser(data.user);
+  const handleUploadClick = (e) => {
+    e.preventDefault();
+    if (!user) {
+      setShowAuthModal(true);
+    } else {
+      navigate('/upload');
+    }
   };
 
   const handleLogout = async () => {
     try {
       const csrfToken = getCSRFToken();
+      console.log('Logout CSRF Token:', csrfToken);
       
       await axios.post('http://localhost:8000/api/logout/', {}, {
         withCredentials: true,
         headers: {
-          'X-CSRFToken': csrfToken
+          'Content-Type': 'application/json',
+          'X-CSRFToken': csrfToken,
         }
       });
       
-      setUser(null);
-      navigate('/'); // Redirect to home after logout
+      logout();
+      navigate('/');
     } catch (error) {
-      console.error('Error logging out:', error);
+      console.error('Error logging out:', error.response?.data || error.message);
     }
   };
 
@@ -72,7 +55,7 @@ function Navbar() {
           </Link>
           <div className="nav-links">
             <Link to="/">Home</Link>
-            <Link to="/upload">Upload Resume</Link>
+            <Link to="/upload" onClick={handleUploadClick}>Upload Resume</Link>
             <Link to="/recommendations">Recommendations</Link>
             <Link to="/jobs">Jobs</Link>
             

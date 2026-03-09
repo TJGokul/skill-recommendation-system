@@ -1,177 +1,235 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import './AICareerAssistant.css';
 
-function AICareerAssistant({ skills, experience }) {
+function AICareerAssistant({ skills = [], experience = 0 }) {
   const [question, setQuestion] = useState('');
-  const [loading, setLoading] = useState(false);
   const [conversation, setConversation] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [theme, setTheme] = useState('light');
+  const chatEndRef = useRef(null);
+  const inputRef = useRef(null);
 
-  // Predefined questions for quick access
-  const predefinedQuestions = [
-    "How can I join an MNC?",
-    "What skills should I learn next?",
-    "How much salary can I expect?",
-    "What certifications would help?",
-    "Which companies are hiring?"
-  ];
+  // Load theme from localStorage
+  useEffect(() => {
+    const savedTheme = localStorage.getItem('theme') || 'light';
+    setTheme(savedTheme);
+    document.documentElement.setAttribute('data-theme', savedTheme);
+  }, []);
 
-  const handleAskQuestion = async (q) => {
-    if (!q.trim()) return;
+  // Scroll to bottom when conversation updates
+  useEffect(() => {
+    scrollToBottom();
+  }, [conversation]);
+
+  const scrollToBottom = () => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  const toggleTheme = () => {
+    const newTheme = theme === 'light' ? 'dark' : 'light';
+    setTheme(newTheme);
+    localStorage.setItem('theme', newTheme);
+    document.documentElement.setAttribute('data-theme', newTheme);
+  };
+
+  const handleAskQuestion = async () => {
+    if (!question.trim()) return;
     
     setLoading(true);
     
-    // Add user question to conversation
-    const updatedConversation = [...conversation, { role: 'user', text: q }];
-    setConversation(updatedConversation);
-    setQuestion('');
-
+    // Add user message with timestamp
+    const userMessage = { 
+      role: 'user', 
+      text: question,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    };
+    
+    const newConversation = [...conversation, userMessage];
+    setConversation(newConversation);
+    
     try {
-      // Format skills properly for the backend
-      const formattedSkills = skills ? skills.map(s => {
-        if (typeof s === 'string') return s;
-        return s.name || '';
-      }).filter(s => s) : [];
-      
-      // Call backend API
+      // Call your RAG-enhanced backend
       const response = await axios.post('http://localhost:8000/api/free-ai-advice/', {
-        question: q,
-        skills: formattedSkills,
-        experience: experience || 0,
-        conversation_history: updatedConversation.slice(-6) // Last 3 exchanges
+        question: question,
+        skills: skills || [],
+        experience: experience || 0
       });
-
-      // Get answer from response
-      const answer = response.data.answer || response.data.message || "I'm not sure how to answer that.";
       
-      // Add AI response to conversation
-      setConversation(prev => [...prev, { role: 'ai', text: answer }]);
+      // Add AI response with metadata
+      setConversation([...newConversation, { 
+        role: 'ai', 
+        text: response.data.answer,
+        category: response.data.category,
+        isJobRelated: response.data.is_job_related,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      }]);
       
     } catch (error) {
-      console.error('Error getting AI advice:', error);
+      console.error('Error:', error);
       
-      // Handle different error types
-      let errorMsg = "I'm having trouble connecting right now. ";
+      // Friendly error message
+      let errorMessage = "I'm having trouble connecting. Please check your internet connection and try again.";
       
-      if (error.response) {
-        // The request was made and the server responded with a status code
-        if (error.response.status === 500) {
-          errorMsg += "The AI service is temporarily unavailable.";
-        } else if (error.response.data && error.response.data.error) {
-          errorMsg += error.response.data.error;
-        } else {
-          errorMsg += "Please try again later.";
-        }
-      } else if (error.request) {
-        // The request was made but no response received
-        errorMsg += "Cannot reach the server. Make sure Django backend is running on port 8000.";
-      } else {
-        // Something happened in setting up the request
-        errorMsg += "Please check your connection and try again.";
+      if (error.response?.status === 429) {
+        errorMessage = "Too many requests. Please wait a moment before asking another question.";
+      } else if (error.response?.status === 500) {
+        errorMessage = "Server error. Our team has been notified. Please try again later.";
       }
       
-      setConversation(prev => [...prev, { role: 'ai', text: errorMsg }]);
+      setConversation([...newConversation, { 
+        role: 'ai', 
+        text: errorMessage,
+        isError: true,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      }]);
     } finally {
       setLoading(false);
+      setQuestion('');
+      // Focus back on input
+      inputRef.current?.focus();
     }
+  };
+
+  const handleKeyPress = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleAskQuestion();
+    }
+  };
+
+  const handleSuggestionClick = (suggestion) => {
+    setQuestion(suggestion);
+    // Auto-submit after short delay
+    setTimeout(() => {
+      handleAskQuestion();
+    }, 100);
+  };
+
+  const formatMessage = (text) => {
+    // Simple formatting for bullet points
+    if (text.includes('⭐️')) {
+      return text.split('⭐️').map((part, index) => {
+        if (index === 0) return part;
+        return (
+          <div key={index} className="tip-item">
+            <span className="tip-icon">⭐️</span>
+            <span>{part}</span>
+          </div>
+        );
+      });
+    }
+    return text;
   };
 
   return (
     <div className="ai-assistant">
       <div className="assistant-header">
-        <h2>🤖 AI Career Assistant</h2>
-        <span className="free-badge">FREE AI</span>
+        <h2>AI Career Assistant</h2>
+        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+          <span className="job-badge">Job-Specific AI</span>
+          <button 
+            onClick={toggleTheme}
+            style={{
+              background: 'rgba(255,255,255,0.2)',
+              border: '1px solid rgba(255,255,255,0.3)',
+              borderRadius: '30px',
+              padding: '0.4rem 1rem',
+              color: 'white',
+              cursor: 'pointer',
+              fontSize: '0.85rem'
+            }}
+          >
+            {theme === 'light' ? '🌙 Dark' : '☀️ Light'}
+          </button>
+        </div>
       </div>
       
-      <p className="assistant-subtitle">
-        Ask me anything about your career! (Powered by Gemini AI - 100% Free)
-      </p>
-
-      <div className="quick-questions">
-        {predefinedQuestions.map((q, i) => (
-          <button
-            key={i}
-            className="question-chip"
-            onClick={() => handleAskQuestion(q)}
-            disabled={loading}
-          >
-            {q}
-          </button>
-        ))}
-      </div>
-
       <div className="chat-area">
         {conversation.length === 0 ? (
-          <div className="welcome-message">
-            <p>👋 Hi! I'm your AI career assistant. Ask me anything about:</p>
-            <ul>
-              <li>🎯 How to join MNCs and prepare for interviews</li>
-              <li>📚 Skills to learn based on your profile</li>
-              <li>💰 Salary expectations in your field</li>
-              <li>🏢 Companies hiring in your domain</li>
-              <li>📝 Resume and certification tips</li>
-            </ul>
+          <div style={{ 
+            textAlign: 'center', 
+            padding: '3rem',
+            color: 'var(--text-muted)'
+          }}>
+            <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>👋</div>
+            <h3>Welcome to AI Career Assistant!</h3>
+            <p>Ask me anything about resumes, interviews, career paths, or job searching.</p>
           </div>
         ) : (
           conversation.map((msg, index) => (
-            <div 
-              key={index} 
-              className={`message ${msg.role === 'user' ? 'user-message' : 'ai-message'}`}
-            >
-              <div className="message-avatar">
-                {msg.role === 'user' ? '👤' : '🤖'}
-              </div>
+            <div key={index} className={`message ${msg.role}`}>
               <div className="message-content">
-                <strong>{msg.role === 'user' ? 'You' : 'AI Assistant'}</strong>
-                <p>{msg.text}</p>
+                <div className="message-header">
+                  <span className="message-role">
+                    {msg.role === 'user' ? 'You' : 'AI Assistant'}
+                  </span>
+                  {msg.role === 'ai' && msg.isJobRelated && (
+                    <span className="job-badge" style={{ fontSize: '0.7rem', padding: '0.2rem 0.6rem' }}>
+                      Job-Specific
+                    </span>
+                  )}
+                  <span className="message-time">{msg.timestamp}</span>
+                </div>
+                <div className="message-text">
+                  {msg.role === 'ai' ? formatMessage(msg.text) : msg.text}
+                </div>
+                {msg.category && (
+                  <span className="category-tag">
+                    📌 {msg.category}
+                  </span>
+                )}
               </div>
             </div>
           ))
         )}
         
         {loading && (
-          <div className="ai-thinking">
-            <div className="typing-indicator">
-              <span></span>
-              <span></span>
-              <span></span>
-            </div>
-            <span>AI is thinking...</span>
+          <div className="loading">
+            <div className="spinner"></div>
+            <p>Finding the best career advice for you...</p>
           </div>
         )}
+        <div ref={chatEndRef} />
       </div>
 
       <div className="input-area">
         <input
+          ref={inputRef}
           type="text"
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
-          onKeyPress={(e) => e.key === 'Enter' && handleAskQuestion(question)}
-          placeholder="Type your career question here..."
+          onKeyPress={handleKeyPress}
+          placeholder="Ask about resumes, interviews, careers..."
           disabled={loading}
         />
-        <button 
-          className="btn btn-primary"
-          onClick={() => handleAskQuestion(question)}
-          disabled={!question.trim() || loading}
-        >
-          {loading ? 'Thinking...' : 'Ask'}
+        <button onClick={handleAskQuestion} disabled={loading || !question.trim()}>
+          {loading ? '...' : 'Ask'}
         </button>
       </div>
-      
-      <div className="ai-footer">
-        <p className="free-tier-note">
-          ✨ Powered by Google Gemini AI - 1,500 free requests per day
-        </p>
-        {skills && skills.length > 0 && (
-          <p className="context-note">
-            📊 Using your skills: {skills.slice(0, 3).map(s => {
-              if (typeof s === 'string') return s;
-              return s.name || '';
-            }).join(', ')}
-            {skills.length > 3 && ` +${skills.length - 3} more`}
-          </p>
-        )}
+
+      <div className="suggestions">
+        <p>Try asking:</p>
+        <div className="suggestions-buttons">
+          <button onClick={() => handleSuggestionClick("How to write a resume?")}>
+            📄 Resume tips
+          </button>
+          <button onClick={() => handleSuggestionClick("Common interview questions")}>
+            🎤 Interview prep
+          </button>
+          <button onClick={() => handleSuggestionClick("Salary negotiation tips")}>
+            💰 Salary advice
+          </button>
+          <button onClick={() => handleSuggestionClick("Career path for software engineer")}>
+            🚀 Career path
+          </button>
+          <button onClick={() => handleSuggestionClick("Skills to learn for data science")}>
+            📊 Skill recommendations
+          </button>
+          <button onClick={() => handleSuggestionClick("How to switch careers")}>
+            🔄 Career change
+          </button>
+        </div>
       </div>
     </div>
   );
